@@ -354,6 +354,58 @@ pub fn key_from_cef(vk: i32, character: u16, cef_mods: u32) -> Option<Key> {
     }
 }
 
+/// From a GDK key press (WebKit edition): `name` = `gdk::Key::name()` ("Escape",
+/// "ISO_Left_Tab", "j"…), `ch` = `gdk::Key::to_unicode()` (shift and layout applied),
+/// `mods` = Shift/Ctrl/Alt/Meta from the event state. None for modifier-only presses.
+pub fn key_from_gdk(name: &str, ch: Option<char>, mods: Mods) -> Option<Key> {
+    const MODIFIERS: &[&str] = &[
+        "Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R", "Meta_L", "Meta_R",
+        "Super_L", "Super_R", "Hyper_L", "Hyper_R", "Caps_Lock", "Num_Lock", "ISO_Level3_Shift",
+        "ISO_Level5_Shift", "Mode_switch",
+    ];
+    if MODIFIERS.contains(&name) {
+        return None;
+    }
+    let named = match name {
+        "Escape" => Some("Escape"),
+        "Return" | "KP_Enter" | "ISO_Enter" => Some("Return"),
+        "Tab" | "ISO_Left_Tab" | "KP_Tab" => Some("Tab"),
+        "BackSpace" => Some("Backspace"),
+        "Delete" | "KP_Delete" => Some("Delete"),
+        "Insert" | "KP_Insert" => Some("Insert"),
+        "Home" | "KP_Home" => Some("Home"),
+        "End" | "KP_End" => Some("End"),
+        "Page_Up" | "Prior" | "KP_Page_Up" | "KP_Prior" => Some("PgUp"),
+        "Page_Down" | "Next" | "KP_Page_Down" | "KP_Next" => Some("PgDown"),
+        "Left" | "KP_Left" => Some("Left"),
+        "Up" | "KP_Up" => Some("Up"),
+        "Right" | "KP_Right" => Some("Right"),
+        "Down" | "KP_Down" => Some("Down"),
+        "space" | "KP_Space" => Some("Space"),
+        "Pause" => Some("Pause"),
+        "Print" => Some("Print"),
+        "Menu" => Some("Menu"),
+        "XF86Back" => Some("Back"),
+        "XF86Forward" => Some("Forward"),
+        _ => None,
+    };
+    if let Some(n) = named {
+        // ISO_Left_Tab is what GDK sends for Shift-Tab (Shift stays in mods)
+        return Some(Key::named(n, mods));
+    }
+    if let Some(n) = name.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()) {
+        if (1..=24).contains(&n) {
+            return Some(Key::named(&format!("F{n}"), mods));
+        }
+    }
+    let c = ch.filter(|&c| is_valid_char(c))?;
+    if mods.has_command_mod() {
+        return Some(Key::from_char(c, mods));
+    }
+    // plain/shifted: the char already has shift applied
+    Some(Key::from_char(c, Mods::NONE))
+}
+
 /// One mode's bindings (qutebrowser's BindingTrie).
 #[derive(Clone, Debug, Default)]
 pub struct Keymap {
@@ -750,6 +802,38 @@ mod tests {
         assert_eq!(key_from_cef(0x54, 20, 0x6), Some(one("<Ctrl-Shift-T>")));
         assert_eq!(key_from_cef(0x4A, 10, 0x4), Some(one("<Ctrl-J>")));
         assert_eq!(key_from_cef(0x47, 'G' as u16, 0x2), Some(one("G")));
+    }
+
+    #[test]
+    fn key_from_gdk_cases() {
+        let (s, c, a, m) = (Mods::SHIFT, Mods::CTRL, Mods::ALT, Mods::META);
+        let g = |n: &str, ch: Option<char>, mods: Mods| key_from_gdk(n, ch, mods).map(|k| k.to_string());
+        assert_eq!(g("j", Some('j'), Mods::NONE).as_deref(), Some("j"));
+        assert_eq!(g("J", Some('J'), s).as_deref(), Some("J"));
+        assert_eq!(g("j", Some('j'), c).as_deref(), Some("<Ctrl-j>"));
+        assert_eq!(g("T", Some('T'), c | s).as_deref(), Some("<Ctrl-Shift-t>"));
+        assert_eq!(g("Escape", Some('\u{1b}'), Mods::NONE).as_deref(), Some("<Escape>"));
+        assert_eq!(g("Escape", None, s).as_deref(), Some("<Shift-Escape>"));
+        assert_eq!(g("semicolon", Some(';'), Mods::NONE).as_deref(), Some(";"));
+        assert_eq!(g("colon", Some(':'), s).as_deref(), Some(":"));
+        assert_eq!(g("bracketleft", Some('['), c).as_deref(), Some("<Ctrl-[>"));
+        assert_eq!(g("space", Some(' '), Mods::NONE).as_deref(), Some("<Space>"));
+        assert_eq!(g("Shift_L", None, s), None);
+        assert_eq!(g("Control_R", None, c), None);
+        assert_eq!(g("BackSpace", Some('\u{8}'), a).as_deref(), Some("<Alt-Backspace>"));
+        assert_eq!(g("ISO_Left_Tab", None, s).as_deref(), Some("<Shift-Tab>"));
+        assert_eq!(g("F5", None, Mods::NONE).as_deref(), Some("<F5>"));
+        assert_eq!(g("XF86Back", None, Mods::NONE).as_deref(), Some("<Back>"));
+        assert_eq!(g("n", Some('n'), m).as_deref(), Some("<Meta-n>"));
+        assert_eq!(g("numbersign", Some('#'), s).as_deref(), Some("#"));
+        assert_eq!(g("3", Some('3'), c).as_deref(), Some("<Ctrl-3>"));
+        assert_eq!(g("Return", Some('\r'), Mods::NONE).as_deref(), Some("<Return>"));
+        assert_eq!(g("KP_Enter", None, Mods::NONE).as_deref(), Some("<Return>"));
+        assert_eq!(g("Page_Down", None, Mods::NONE).as_deref(), Some("<PgDown>"));
+        // GDK keys equal parsed notation (and the CEF path)
+        assert_eq!(key_from_gdk("T", Some('T'), c | s), Some(one("<Ctrl-Shift-T>")));
+        assert_eq!(key_from_gdk("G", Some('G'), s), Some(one("G")));
+        assert_eq!(key_from_gdk("T", Some('T'), c | s), key_from_cef(0x54, 20, 0x6));
     }
 
     // --- Keymap / BindingTrie ---

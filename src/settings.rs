@@ -12,6 +12,11 @@ pub const SETTINGS: &[(&str, &str, bool, &str, &[&str])] = &[
     ("chromium.low_end_device_mode", "str", false, "\"auto\"", &["always", "auto", "never"]),
     ("auto_save.session", "bool", false, "false", &[]),
     ("content.autoplay", "bool", false, "true", &[]),
+    // WebKit edition only (the CEF edition ignores them): identity (D8) and engine knobs
+    ("content.user_agent", "str", false, "\"safari\"", &[]),
+    ("webkit.itp", "bool", false, "true", &[]),
+    ("webkit.site_specific_quirks", "bool", false, "true", &[]),
+    ("webkit.hardware_acceleration", "str", false, "\"always\"", &["always", "never"]),
     ("content.canvas_reading", "bool", false, "true", &[]),
     ("content.cookies.accept", "str", false, "\"all\"", &["all", "no-3rdparty", "no-unknown-3rdparty", "never"]),
     ("content.fullscreen.window", "bool", false, "false", &[]),

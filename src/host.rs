@@ -23,6 +23,10 @@ pub trait Host {
     fn restore(&self, v: &serde_json::Value, clear: bool);
     /// Run `f` on the UI thread after `ms` milliseconds.
     fn later(&self, ms: u64, f: Box<dyn FnOnce()>);
+    /// Run a command line in tab `tab` (edition's id); false if that tab is gone.
+    fn run_in_tab(&self, tab: u64, line: &str) -> bool;
+    /// Show `text` as plain text in a new tab (`spawn -o`).
+    fn show_text(&self, text: &str);
 }
 
 thread_local! {
@@ -71,6 +75,12 @@ pub fn restore(v: &serde_json::Value, clear: bool) {
 }
 pub fn later(ms: u64, f: impl FnOnce() + 'static) {
     with(|h| h.later(ms, Box::new(f)));
+}
+pub fn run_in_tab(tab: u64, line: &str) -> bool {
+    with(|h| h.run_in_tab(tab, line)).unwrap_or(false)
+}
+pub fn show_text(text: &str) {
+    with(|h| h.show_text(text));
 }
 
 /// Run `f` on the UI thread (from a worker thread). Dropped before `set`.

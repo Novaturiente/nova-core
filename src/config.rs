@@ -238,6 +238,7 @@ impl Config {
             "content.cookies.accept",
             "content.headers.custom",
             "content.headers.do_not_track",
+            "content.user_agent",
             "tabs.hibernate_after",
             "tabs.freeze_after",
         ];
