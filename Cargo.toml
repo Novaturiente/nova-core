@@ -1,0 +1,9 @@
+[package]
+name = "nova-core"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Engine-independent core shared by novabrowser (CEF) and novabrowser-webkit"
+publish = false
+
+[dependencies]
