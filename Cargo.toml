@@ -14,4 +14,5 @@ oxc_semantic = "0.153"
 oxc_span = "0.153"
 oxc_transformer = "0.153"
 rquickjs = { version = "0.14.0", features = ["loader"] }
+rusqlite = "0.40.2"
 serde_json = "1.0.152"

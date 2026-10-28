@@ -224,6 +224,23 @@ fn zoom_step_in(levels: &[f64], current: f64, steps: i32) -> f64 {
     levels[target.clamp(0, last) as usize]
 }
 
+/// `:set` / `:config-cycle` / settings page: save the value unless `temp`. A value
+/// config.ts sets can only be overridden until restart (config.ts wins).
+pub fn set_user(name: &str, value: &str, temp: bool) -> Result<(), String> {
+    let cfg = config::get();
+    if temp || cfg.in_config_ts(name) {
+        cfg.set_runtime(name, value)?;
+        if !temp {
+            crate::host::message(
+                "warning",
+                &format!("{name} is set in config.ts: changed until restart only"),
+            );
+        }
+        return Ok(());
+    }
+    config::save(name, Some(value))
+}
+
 /// Host of a URL, without userinfo or port.
 pub fn host(url: &str) -> &str {
     let rest = url.split_once("://").map_or(url, |(_, r)| r);
