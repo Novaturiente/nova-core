@@ -361,12 +361,73 @@ pub fn scheme() -> &'static str {
     }
 }
 
-/// Our own page's HTML with its colour scheme following the UI theme.
+/// Shared look of our own pages (settings, history, bookmarks, downloads, welcome, crash):
+/// cards, pill buttons and fields in the UI theme's colours (`--bg` … set by `themed_page`).
+/// Added after the page's own style, so it wins over the older per-page rules.
+const PAGE_CSS: &str = r#"
+html{background:var(--bg)}
+body{font:14px/1.45 system-ui,sans-serif;color:var(--fg);background:var(--bg);max-width:60em;margin:0 auto;padding:0 1.5em 3em}
+a{color:var(--accent)}
+h1{position:sticky;top:0;z-index:2;margin:0 -1.5em;padding:1.1em 1.5em .9em;font-size:1.45em;font-weight:650;
+  display:flex;gap:.8em;align-items:center;flex-wrap:wrap;background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
+h2{font-size:.78em;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);opacity:1;margin:1.8em 0 .6em .3em}
+p.note,.note,.hint,.empty{color:var(--muted);opacity:1}
+small{color:var(--muted)}
+input,select{font:inherit;color:var(--fg);background:var(--surface);border:1px solid var(--border);border-radius:12px;
+  padding:.5em .9em;outline:none;transition:border-color .12s,box-shadow .12s}
+input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
+input::placeholder{color:var(--muted)}
+option{background:var(--surface);color:var(--fg)}
+h1 input{flex:1;max-width:22em;font-size:.6em;border-radius:999px;padding:.6em 1.1em}
+h1 button{font-size:.6em}
+button{font:inherit;font-size:.92em;color:var(--fg);background:var(--surface2);border:1px solid var(--border);border-radius:999px;
+  padding:.4em 1.1em;cursor:pointer;transition:background .12s,border-color .12s,color .12s}
+button:hover{border-color:color-mix(in srgb,var(--accent) 50%,var(--border))}
+button.del{color:var(--red);background:color-mix(in srgb,var(--red) 10%,var(--surface))}
+button.del:hover{background:color-mix(in srgb,var(--red) 22%,var(--surface));border-color:color-mix(in srgb,var(--red) 50%,transparent)}
+form button:not([type=button]),button.primary{background:var(--accent);color:var(--on-accent);border-color:transparent;font-weight:600}
+form button:not([type=button]):hover,button.primary:hover{filter:brightness(1.1)}
+.r,.d,form{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:.7em 1em;margin:.5em 0;
+  transition:border-color .12s,background .12s}
+.r:hover,.d:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--border))}
+form{background:color-mix(in srgb,var(--surface) 60%,var(--bg));border-style:dashed}
+.r form{background:none;border:0;padding:0;margin:0;flex:1}
+.r a{color:var(--fg)}
+input[type=checkbox]{appearance:none;-webkit-appearance:none;flex:0 0 auto;width:2.6em;height:1.5em;padding:0;margin:0;border-radius:999px;
+  position:relative;cursor:pointer;background:var(--surface2);transform:none}
+input[type=checkbox]::before{content:"";position:absolute;top:.17em;left:.2em;width:1.05em;height:1.05em;border-radius:50%;
+  background:var(--muted);transition:left .15s,background .15s}
+input[type=checkbox]:checked{background:var(--accent);border-color:transparent}
+input[type=checkbox]:checked::before{left:1.3em;background:var(--on-accent)}
+kbd,code{font:.88em ui-monospace,monospace;padding:.15em .5em;border-radius:7px;background:var(--surface2);border:1px solid var(--border)}
+table{border-collapse:separate;border-spacing:0 .35em}td{padding:.25em 1em .25em 0}
+::-webkit-scrollbar{width:10px}::-webkit-scrollbar-thumb{background:var(--surface2);border-radius:999px;border:2px solid var(--bg)}
+"#;
+
+/// Our own page's HTML with its colour scheme and the shared look following the UI theme.
 pub fn themed_page(html: String) -> String {
     // on :root, not body: text and canvas colours resolve from the root element
     let s = scheme();
+    let cfg = crate::config::get();
+    let c = |n: &str| css_color(&cfg.str(n));
+    let vars = format!(
+        ":root{{color-scheme:{s};--bg:{};--surface:{};--surface2:{};--border:{};--fg:{};--muted:{};--accent:{};--on-accent:{};--red:{};--green:{};--warm:{}}}",
+        c("colors.completion.even.bg"),
+        c("colors.tooltip.bg"),
+        c("colors.completion.item.selected.bg"),
+        c("colors.completion.category.border.top"),
+        c("colors.completion.fg"),
+        c("colors.tabs.odd.fg"),
+        c("colors.tabs.indicator.start"),
+        c("colors.downloads.start.fg"),
+        c("colors.messages.error.bg"),
+        c("colors.downloads.stop.bg"),
+        c("colors.messages.warning.bg"),
+    );
     html.replace("color-scheme:light dark", &format!("color-scheme:{s}"))
-        .replacen("<style>", &format!("<style>:root{{color-scheme:{s}}}"), 1)
+        .replacen("<style>", &format!("<style>{vars}"), 1)
+        .replacen("</style>", &format!("</style><style>{PAGE_CSS}</style>"), 1)
 }
 
 /// The preset's value for colour setting `name` (None = not a themed colour).

@@ -126,12 +126,12 @@ input[type=checkbox]{width:auto;transform:scale(1.3)}
 button{font:inherit;padding:.25em .7em;border-radius:8px;border:0;cursor:pointer;background:color-mix(in srgb,currentColor 12%,transparent);color:inherit}
 .locked{opacity:.55}
 </style>
-<h1>Settings</h1>
+<h1><span id=t>Settings</span><input id=filter placeholder="Filter settings…" autocomplete=off></h1>
 <p class=note>Saved right away. Settings set in config.ts are shown greyed out — change them there. Everything else: <code>:set</code> or config.ts.</p>
 <div id=rows></div>
 <script>
 const D=/*DATA*/{};
-if(D.profile){document.querySelector("h1").textContent="Settings — profile "+D.profile;document.querySelector("p.note").append(" Changes here apply to this profile only; unchanged ones follow the default profile.");}
+if(D.profile){document.getElementById("t").textContent="Settings — profile "+D.profile;document.querySelector("p.note").append(" Changes here apply to this profile only; unchanged ones follow the default profile.");}
 const send=(m)=>window.nova&&nova.send("page "+D.token+" "+JSON.stringify({...m,page:"settings"}));
 const el=(t,p,...c)=>{const e=document.createElement(t);Object.assign(e,p);e.append(...c);return e;};
 for(const r of D.rows){
@@ -143,6 +143,11 @@ for(const r of D.rows){
   input.disabled=r.locked;
   const row=el("div",{className:"r"+(r.locked?" locked":"")},el("label",{textContent:r.label},el("small",{textContent:r.name+(r.locked?" · set in config.ts":"")}),...(r.note?[el("small",{className:"warn",textContent:r.note})]:[])),input);
   if(!r.locked) row.append(el("button",{textContent:"Reset",title:"back to the default",onclick:()=>send({a:"reset",k:r.name})}));
+  row.dataset.text=(r.label+" "+r.name).toLowerCase();
   document.getElementById("rows").append(row);
 }
+document.getElementById("filter").oninput=(e)=>{
+  const w=e.target.value.toLowerCase().split(/\s+/).filter(Boolean);
+  for(const x of document.getElementById("rows").children)x.hidden=!w.every(t=>x.dataset.text.includes(t));
+};
 </script>"##;
