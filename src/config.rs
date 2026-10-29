@@ -192,6 +192,9 @@ impl Config {
 
 /// A `:set` value parsed the way the schema expects (e.g. `true`, `40%`, JSON lists).
 fn parse_value(name: &str, value: &str) -> Result<Value, String> {
+    if let Some(ed) = crate::settings::other_edition(name) {
+        return Err(format!("{name} only applies to the {ed} edition"));
+    }
     {
         let (_, kind, none_ok, _, values) = SETTINGS
             .iter()

@@ -158,3 +158,23 @@ pub const SETTINGS: &[(&str, &str, bool, &str, &[&str])] = &[
     ("bindings.default", "dict", true, "{}", &[]) /* real default: bindings.rs */,
     ("bindings.commands", "dict", true, "{}", &[]),
 ];
+
+/// `Some(edition)` when `name` only works in the other edition (`chromium.*` is CEF,
+/// `webkit.*` is WebKit). config.ts may still set it (one file for both editions:
+/// ignored there); `:set` refuses it.
+pub fn other_edition(name: &str) -> Option<&'static str> {
+    let webkit = crate::paths::app().ends_with("-webkit");
+    match () {
+        _ if name.starts_with("chromium.") && webkit => Some("CEF"),
+        _ if name.starts_with("webkit.") && !webkit => Some("WebKit"),
+        _ => None,
+    }
+}
+
+#[test]
+fn cef_edition_refuses_webkit_settings() {
+    // tests run as the default app, "novabrowser" (CEF)
+    assert_eq!(other_edition("webkit.itp"), Some("WebKit"));
+    assert_eq!(other_edition("chromium.args"), None);
+    assert_eq!(other_edition("theme"), None);
+}
