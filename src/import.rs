@@ -52,8 +52,14 @@ pub fn main(arg: Option<&str>, history_db: &Path) -> Result<(), String> {
             println!("  {name:<12} {mb:>7.1} MB  {}", p.display());
         }
         println!("A name picks that browser's profile with the most history, e.g. `--import zen`.");
+        if crate::paths::app() != "novabrowser" {
+            println!("`--import novabrowser` takes the CEF edition's history, marks, config, sessions and permissions.");
+        }
         return Ok(());
     };
+    if arg == "novabrowser" {
+        return from_cef(history_db);
+    }
     let dir = if arg.contains('/') {
         Some(PathBuf::from(arg))
     } else {
@@ -94,6 +100,100 @@ pub fn main(arg: Option<&str>, history_db: &Path) -> Result<(), String> {
         book.len()
     );
     Ok(())
+}
+
+/// `--import novabrowser` (WebKit edition): the CEF edition's data for the same
+/// profile. History, cmd history and marks merge; config files, sessions, permission
+/// answers and the downloads list are copied only where this edition has none yet, so
+/// running it twice changes nothing and never overwrites. Not carried over: cookies,
+/// logins, site data, and Chromium's per-host zoom (inside its `Preferences`).
+fn from_cef(history_db: &Path) -> Result<(), String> {
+    if crate::paths::app() == "novabrowser" {
+        return Err("this is the CEF edition already".into());
+    }
+    let base = |var: &str, fallback: &str| {
+        std::env::var_os(var)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(fallback))
+            .join("novabrowser")
+    };
+    let prof = |p: PathBuf| match crate::paths::profile() {
+        Some(n) => p.join("profiles").join(n),
+        None => p,
+    };
+    let (src_data, src_cfg) = (prof(base("XDG_DATA_HOME", ".local/share")), base("XDG_CONFIG_HOME", ".config"));
+    let dst_data = crate::paths::xdg_dir("XDG_DATA_HOME", ".local/share");
+    let dst_cfg = crate::config::dir();
+    if !src_data.is_dir() && !src_cfg.is_dir() {
+        return Err(format!("no CEF edition data in {} or {}", src_data.display(), src_cfg.display()));
+    }
+
+    let hist = src_data.join("history.sqlite");
+    if hist.is_file() {
+        let (_, rows, _) = read(&hist).map_err(|e| format!("{}: {e}", hist.display()))?;
+        let db = crate::history::open(history_db).map_err(|e| e.to_string())?;
+        let total = crate::history::import(&db, &rows).map_err(|e| e.to_string())?;
+        let n = import_cmd_history(&db, &hist).map_err(|e| format!("cmd history: {e}"))?;
+        println!("imported {} history entries and {n} commands; history now has {total}", rows.len());
+    }
+
+    // marks: next to config.ts for the default profile, in the data dir for named ones
+    let marks = if crate::paths::profile().is_some() { &src_data } else { &src_cfg };
+    let read_m = |f: &str| std::fs::read_to_string(marks.join(f)).unwrap_or_default();
+    let quick = crate::marks::parse(&read_m("quickmarks"), true);
+    let book = crate::marks::parse(&read_m("bookmarks/urls"), false);
+    let (nq, nb) = crate::marks::import(&quick, &book)?;
+    println!("imported {nq} new quickmarks and {nb} new bookmarks");
+
+    let mut copied = vec![];
+    let mut copy = |from: PathBuf, to: PathBuf| -> Result<(), String> {
+        if from.is_file() && !to.exists() {
+            std::fs::create_dir_all(to.parent().unwrap()).map_err(|e| e.to_string())?;
+            std::fs::copy(&from, &to).map_err(|e| format!("{}: {e}", from.display()))?;
+            copied.push(to.display().to_string());
+        }
+        Ok(())
+    };
+    // config.ts and every file next to it (excludes lists, files config.ts reads)
+    let mut cfg_dirs = vec![(src_cfg.clone(), dst_cfg.clone())];
+    if let Some(n) = crate::paths::profile() {
+        cfg_dirs.push((src_cfg.join("profiles").join(n), dst_cfg.join("profiles").join(n)));
+    }
+    for (from, to) in cfg_dirs {
+        for e in std::fs::read_dir(&from).into_iter().flatten().flatten() {
+            if e.file_name() != "quickmarks" {
+                copy(e.path(), to.join(e.file_name()))?;
+            }
+        }
+    }
+    for f in ["permissions.json", "downloads.json"] {
+        copy(src_data.join(f), dst_data.join(f))?;
+    }
+    for e in std::fs::read_dir(src_data.join("sessions")).into_iter().flatten().flatten() {
+        copy(e.path(), dst_data.join("sessions").join(e.file_name()))?;
+    }
+    println!("copied {} files (existing ones kept){}", copied.len(),
+        copied.iter().map(|c| format!("\n  {c}")).collect::<String>());
+    println!("not imported: cookies, logins and site data (sign in again), per-site zoom");
+    Ok(())
+}
+
+/// Append the CEF edition's command-line history when ours is still empty
+/// (it has no timestamps to merge by). Returns how many were added.
+fn import_cmd_history(db: &Connection, src: &Path) -> rusqlite::Result<usize> {
+    if db.query_row("SELECT count(*) FROM cmd_history", [], |r| r.get::<_, i64>(0))? > 0 {
+        return Ok(0);
+    }
+    let src = Connection::open_with_flags(src, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let cmds: Vec<String> = src
+        .prepare("SELECT cmd FROM cmd_history ORDER BY id")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut st = db.prepare("INSERT INTO cmd_history(cmd) VALUES (?1)")?;
+    for c in &cmds {
+        st.execute([c])?;
+    }
+    Ok(cmds.len())
 }
 
 fn qutebrowser_config() -> PathBuf {
@@ -275,6 +375,9 @@ fn read_db(db: &Connection) -> rusqlite::Result<(&'static str, Vec<Row>)> {
         let sql = "SELECT url, coalesce(title, ''), last_visit_date / 1000000, visit_count, typed FROM moz_places
                    WHERE visit_count > 0 AND last_visit_date IS NOT NULL AND hidden = 0";
         ("Firefox", sql.to_string())
+    } else if has("cmd_history")? {
+        // novabrowser's own schema (either edition)
+        ("novabrowser", "SELECT url, title, last_atime, visits, typed FROM history".to_string())
     } else if has("CompletionHistory")? {
         (
             "qutebrowser",
