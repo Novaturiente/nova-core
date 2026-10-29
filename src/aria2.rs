@@ -76,11 +76,16 @@ pub fn start(engine_backend: &str, on_update: OnUpdate, on_added: OnAdded) {
         let _ = std::fs::write(&session, "");
     }
     let s = session.to_string_lossy();
+    // the secret goes in a 0600 conf file, not argv: other users can read /proc/*/cmdline (A4)
+    let conf = xdg_dir("XDG_DATA_HOME", ".local/share").join("aria2.conf");
+    if let Err(e) = write_private(&conf, &format!("rpc-secret={secret}\n")) {
+        return eprintln!("{}: aria2: {}: {e}", crate::paths::app(), conf.display());
+    }
     let child = std::process::Command::new(bin)
         .args([
             "--enable-rpc=true".into(),
             format!("--rpc-listen-port={port}"),
-            format!("--rpc-secret={secret}"),
+            format!("--conf-path={}", conf.display()),
             format!("--input-file={s}"),
             format!("--save-session={s}"),
             "--save-session-interval=10".into(),
@@ -120,6 +125,25 @@ pub fn start(engine_backend: &str, on_update: OnUpdate, on_added: OnAdded) {
 
 pub fn enabled() -> bool {
     RPC.get().is_some()
+}
+
+/// Replace `path` with `text`, readable by the owner only from the first byte on.
+fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let _ = std::fs::remove_file(path); // an old file keeps its old mode
+    std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?.write_all(text.as_bytes())
+}
+
+#[test]
+fn private_conf_is_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let p = std::env::temp_dir().join(format!("nova-aria2-{}.conf", std::process::id()));
+    std::fs::write(&p, "old").unwrap();
+    write_private(&p, "rpc-secret=x\n").unwrap();
+    assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(std::fs::read_to_string(&p).unwrap(), "rpc-secret=x\n");
+    std::fs::remove_file(p).unwrap();
 }
 
 fn random_hex() -> String {
