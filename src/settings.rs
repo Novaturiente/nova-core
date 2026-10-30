@@ -129,7 +129,7 @@ pub const SETTINGS: &[(&str, &str, bool, &str, &[&str])] = &[
     ("colors.tabs.selected.odd.bg", "str", false, "\"black\"", &[]),
     ("colors.tabs.selected.even.fg", "str", false, "\"white\"", &[]),
     ("colors.tabs.selected.even.bg", "str", false, "\"black\"", &[]),
-    ("colors.webpage.bg", "str", true, "\"white\"", &[]),
+    ("colors.webpage.bg", "str", true, "\"#333333\"", &[]),
     ("colors.webpage.preferred_color_scheme", "str", false, "\"auto\"", &["auto", "light", "dark"]),
     ("colors.webpage.darkmode.enabled", "bool", false, "false", &[]),
     ("colors.webpage.darkmode.algorithm", "str", false, "\"lightness-cielab\"", &["lightness-cielab", "lightness-hsl", "brightness-rgb"]),
