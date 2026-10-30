@@ -77,7 +77,7 @@ pub const CORE: &[(&str, &str, &str)] = &[
     ("normal", "Sd", "downloads"),
     ("normal", "Sh", "history"),
     ("normal", "Sp", "password-fill"), // also fills a field the popup didn't detect
-    ("normal", "<Ctrl-p>", "tab-pin"),
+    ("normal", "<Ctrl-Shift-p>", "tab-pin"),
     ("normal", "gD", "tab-give"),
     // zoom
     ("normal", "+", "zoom-in"),
