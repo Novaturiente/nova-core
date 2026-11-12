@@ -5,16 +5,21 @@
 //! Each tab also keeps its back/forward URLs and scroll position (window.rs `go`).
 use crate::{config, host, paths::xdg_dir};
 use serde_json::{json, Value};
-use std::cell::{Cell, RefCell};
-use std::path::PathBuf;
+use std::cell::Cell;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 const DEBOUNCE_MS: u64 = 1000;
 
 thread_local! {
     static PENDING: Cell<bool> = const { Cell::new(false) };
-    /// Last JSON written to the default session; unchanged state isn't rewritten.
-    static LAST: RefCell<String> = const { RefCell::new(String::new()) };
 }
+/// Last default-session save: (its number, JSON written). Autosaves encode and write on
+/// worker threads (fsync of a large session stalled the UI), so they can finish out of
+/// order: an older save never overwrites a newer one, unchanged state isn't rewritten.
+static LAST: Mutex<(u64, String)> = Mutex::new((0, String::new()));
+static SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn path(name: &str) -> Result<PathBuf, String> {
     if name.is_empty() || name.starts_with('.') || name.contains('/') {
@@ -37,10 +42,14 @@ fn default_name() -> String {
 pub fn write(name: &str, v: &Value) -> Result<String, String> {
     let p = path(name)?;
     let text = serde_json::to_string_pretty(v).unwrap();
-    std::fs::create_dir_all(p.parent().unwrap())
-        .and_then(|_| crate::paths::write_atomic(&p, text.as_bytes()))
-        .map_err(|e| format!("{}: {e}", p.display()))?;
+    write_text(&p, &text)?;
     Ok(text)
+}
+
+fn write_text(p: &Path, text: &str) -> Result<(), String> {
+    std::fs::create_dir_all(p.parent().unwrap())
+        .and_then(|_| crate::paths::write_atomic(p, text.as_bytes()))
+        .map_err(|e| format!("{}: {e}", p.display()))
 }
 
 pub fn read(name: &str) -> Result<Value, String> {
@@ -55,27 +64,43 @@ pub fn dirty() {
         PENDING.set(true);
         host::later(DEBOUNCE_MS, || {
             PENDING.set(false);
-            save_now();
+            if let Some((seq, p, v)) = collect() {
+                std::thread::spawn(move || store(seq, &p, v));
+            }
         });
     }
 }
 
-/// Write the default session now if autosave is on and something changed.
+/// Write the default session now (quit, last window closing) if autosave is on and something changed.
 pub fn save_now() {
+    if let Some((seq, p, v)) = collect() {
+        store(seq, &p, v);
+    }
+}
+
+/// On the UI thread: the default session's state, numbered in the order it was taken.
+fn collect() -> Option<(u64, PathBuf, Value)> {
     if !config::get().bool("auto_save.session") {
-        return;
+        return None;
     }
-    let Some(v) = crate::host::session_json() else {
-        return;
-    };
+    let v = crate::host::session_json()?;
+    let p = path(&default_name()).map_err(|e| eprintln!("novabrowser: session: {e}")).ok()?;
+    Some((SEQ.fetch_add(1, Ordering::Relaxed) + 1, p, v))
+}
+
+/// Any thread: write save `seq` unless a newer one was written or nothing changed.
+fn store(seq: u64, p: &Path, v: Value) {
     let text = serde_json::to_string_pretty(&v).unwrap();
-    if LAST.with_borrow(|l| *l == text) {
+    let mut last = LAST.lock().unwrap();
+    if seq <= last.0 {
         return;
     }
-    match write(&default_name(), &v) {
-        Ok(t) => LAST.set(t),
-        Err(e) => eprintln!("novabrowser: session: {e}"),
+    if last.1 != text {
+        if let Err(e) = write_text(p, &text) {
+            return eprintln!("novabrowser: session: {e}");
+        }
     }
+    *last = (seq, text);
 }
 
 /// `:session-save [name]`.
@@ -110,7 +135,7 @@ pub fn startup() -> Option<Value> {
             .as_array()
             .is_some_and(|t| !t.is_empty());
     has_tabs.then(|| {
-        LAST.set(serde_json::to_string_pretty(&v).unwrap());
+        LAST.lock().unwrap().1 = serde_json::to_string_pretty(&v).unwrap();
         v
     })
 }
@@ -134,5 +159,18 @@ mod tests {
         assert!(super::path(".hidden").is_err());
         assert!(super::path("").is_err());
         assert!(super::path("work").unwrap().ends_with("sessions/work.json"));
+    }
+
+    #[test]
+    fn older_save_never_overwrites_newer() {
+        let dir = std::env::temp_dir().join(format!("nova-core-session-{}", std::process::id()));
+        let p = dir.join("s.json");
+        super::store(2, &p, serde_json::json!("new"));
+        super::store(1, &p, serde_json::json!("old")); // a slower, earlier autosave
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "\"new\"");
+        std::fs::remove_file(&p).unwrap(); // unchanged state: not rewritten
+        super::store(3, &p, serde_json::json!("new"));
+        assert!(!p.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
